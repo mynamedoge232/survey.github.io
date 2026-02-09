@@ -1,139 +1,182 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8">
-<title>typing trainer</title>
-<style>
-:root{--bg:#f4f4f4;--box:#fff;--text:#000;--correct:green;--wrong:red}
-body.dark{--bg:#121212;--box:#1e1e1e;--text:#fff}
-body{background:var(--bg);color:var(--text);font-family:Arial;text-align:center;padding:30px}
-.box{background:var(--box);padding:20px;max-width:900px;margin:auto;border-radius:10px}
-#text{max-height:180px;overflow:auto;border:1px solid #aaa;padding:10px}
-#text span{padding:2px}
-.correct{color:var(--correct)} .wrong{color:var(--wrong)} .current{text-decoration:underline}
-textarea{width:100%;height:90px;font-size:16px;margin-top:10px;background:var(--bg);color:var(--text)}
-button{margin:5px;padding:8px 14px;font-size:15px}
-canvas{background:#111;margin-top:15px;border-radius:8px}
-</style>
+  <meta charset="UTF-8">
+  <title>Realtime Questionnaire</title>
+  <!-- Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+  <style>
+    body { font-family: Arial; max-width: 700px; margin: auto; padding: 20px; }
+    .question { border: 1px solid #ccc; padding: 15px; margin-bottom: 15px; }
+    button { margin-top: 5px; }
+    input[type=password] { width: 200px; }
+    input[type=text] { width: 100%; }
+    pre { background: #f4f4f4; padding: 10px; overflow-x: auto; }
+  </style>
 </head>
 <body>
 
-<div class="box">
-<h2>typing trainer</h2>
+<h1>Realtime Questionnaire</h1>
 
-<button onclick="toggleDark()">dark</button>
-<button onclick="togglePractice()">practice: <span id="practice">off</span></button>
-<button onclick="toggleNoSpace()">no-space: <span id="nospace">off</span></button>
-
-<div id="best">best wpm: 0</div>
-<div id="text"></div>
-<textarea id="input"></textarea>
-
-<button onclick="restart()">restart</button>
-<div id="result"></div>
-
-<canvas id="chart" width="850" height="200"></canvas>
+<!-- User Name -->
+<div id="nameDiv">
+  <input type="text" id="userName" placeholder="Enter your first name">
+  <button onclick="startSurvey()">Start Survey</button>
 </div>
 
+<!-- EDIT LOGIN -->
+<div id="login" style="margin-top:20px;">
+  <h3>Edit Mode (Password required)</h3>
+  <input type="password" id="password" placeholder="Password">
+  <button onclick="login()">Login</button>
+</div>
+
+<!-- EDIT PANEL -->
+<div id="editor" style="display:none; margin-top:20px;">
+  <h3>Add Question</h3>
+  <input id="newQuestion" placeholder="Question text" style="width:100%;">
+  <button onclick="addQuestion()">Add</button>
+  <button onclick="resetVotes()">Reset Votes</button>
+  <hr>
+  <h3>All Answers (Per Person)</h3>
+  <pre id="allAnswers"></pre>
+</div>
+
+<!-- QUESTIONS -->
+<div id="questions"></div>
+
 <script>
-const wordsList=["the","and","you","that","this","with","have","for","not","are","was","but","all","can","has","had","will","dog","cat","run","jump","play","fast","slow","good","nice","fun"];
-let words=[],fullText="",noSpace=false,practice=false;
-let startTime=0;
-let bestWpm=+localStorage.getItem("bestWpm")||0;
-let history=JSON.parse(localStorage.getItem("wpmHistory")||"[]");
+  // 🔥 YOUR FIREBASE CONFIG
+  const firebaseConfig = {
+    apiKey: "AIzaSyAezObxeL4XG0gFk9utDuuMKZH67BzVKuI",
+    authDomain: "survey-tracker-e5f45.firebaseapp.com",
+    projectId: "survey-tracker-e5f45",
+    storageBucket: "survey-tracker-e5f45.firebasestorage.app",
+    messagingSenderId: "343879125091",
+    appId: "1:343879125091:web:720fd2d5228d0f1899d056",
+    measurementId: "G-DJ0MF6EQ2T"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+  const questionsRef = db.ref("questions");
+  const answersRef = db.ref("answers");
 
-best.innerText="best wpm: "+bestWpm;
+  const EDIT_PASSWORD = "hisinges1234";
+  let editMode = false;
+  let currentUser = "";
 
-function addWords(count=60){
-  for(let i=0;i<count;i++){
-    words.push(wordsList[Math.floor(Math.random()*wordsList.length)]);
+  function startSurvey() {
+    const name = document.getElementById("userName").value.trim();
+    if (!name) { alert("Please enter your first name."); return; }
+    currentUser = name;
+    document.getElementById("nameDiv").style.display = "none";
   }
-}
 
-function renderText(){
-  fullText=noSpace?words.join(""):words.join(" ");
-  text.innerHTML="";
-  fullText.split("").forEach((c,i)=>{
-    const s=document.createElement("span");
-    s.innerText=c;
-    if(i===0)s.classList.add("current");
-    text.appendChild(s);
+  function login() {
+    const input = document.getElementById("password").value;
+    if (input === EDIT_PASSWORD) {
+      editMode = true;
+      document.getElementById("editor").style.display = "block";
+      loadAllAnswers();
+      alert("Edit mode enabled");
+    } else {
+      alert("Wrong password");
+    }
+    document.getElementById("password").value = "";
+  }
+
+  function addQuestion() {
+    const text = document.getElementById("newQuestion").value;
+    if (!text) return;
+    questionsRef.push({
+      text: text,
+      answers: { never: 0, sometimes: 0, half: 0, almost: 0 },
+      locked: false
+    });
+    document.getElementById("newQuestion").value = "";
+  }
+
+  function editQuestion(id) {
+    const newText = prompt("Edit question text:");
+    if (newText) questionsRef.child(id).update({ text: newText });
+  }
+
+  function deleteQuestion(id) {
+    if (confirm("Are you sure you want to delete this question?")) {
+      questionsRef.child(id).remove();
+      answersRef.child(id).remove();
+    }
+  }
+
+  function vote(id, type) {
+    if (!currentUser) { alert("Please enter your name first."); return; }
+
+    questionsRef.child(id).once("value", snap => {
+      const q = snap.val();
+      if (q.locked) { alert("Voting for this question is locked."); return; }
+
+      answersRef.child(id).child(currentUser).once("value", snap2 => {
+        if (snap2.exists()) {
+          alert("You already answered this question.");
+        } else {
+          answersRef.child(id).child(currentUser).set(type);
+          questionsRef.child(id).child("answers").child(type)
+            .transaction(val => (val||0)+1);
+        }
+      });
+    });
+  }
+
+  function resetVotes() {
+    if (!editMode) return;
+    if (!confirm("Reset votes so everyone can answer again?")) return;
+
+    questionsRef.once("value", snap => {
+      snap.forEach(q => {
+        questionsRef.child(q.key).update({ locked: false });
+      });
+    });
+
+    answersRef.remove().then(() => loadAllAnswers());
+  }
+
+  function loadAllAnswers() {
+    answersRef.once("value", snap => {
+      const data = snap.val() || {};
+      document.getElementById("allAnswers").textContent = JSON.stringify(data, null, 2);
+    });
+  }
+
+  questionsRef.on("value", snap => {
+    const container = document.getElementById("questions");
+    container.innerHTML = "";
+
+    snap.forEach(q => {
+      const data = q.val();
+      const total = Object.values(data.answers).reduce((a,b)=>a+b,0)||1;
+
+      let editBtns = "";
+      if (editMode) {
+        editBtns = `<br>
+          <button onclick="editQuestion('${q.key}')">Edit Question</button>
+          <button onclick="deleteQuestion('${q.key}')">Delete Question</button>`;
+      }
+
+      container.innerHTML += `
+        <div class="question">
+          <strong>${data.text}</strong><br><br>
+
+          <button onclick="vote('${q.key}','never')">Never (${Math.round(data.answers.never/total*100)}%)</button><br>
+          <button onclick="vote('${q.key}','sometimes')">Sometimes (${Math.round(data.answers.sometimes/total*100)}%)</button><br>
+          <button onclick="vote('${q.key}','half')">Half the time (${Math.round(data.answers.half/total*100)}%)</button><br>
+          <button onclick="vote('${q.key}','almost')">Almost always (${Math.round(data.answers.almost/total*100)}%)</button>
+
+          ${editBtns}
+        </div>
+      `;
+    });
   });
-}
-
-function restart(){
-  words=[]; addWords(80); renderText();
-  input.value=""; input.focus();
-  result.innerText="";
-  startTime=Date.now();
-}
-
-input.addEventListener("input",()=>{
-  const val=input.value;
-  const spans=[...text.children];
-  spans.forEach(s=>s.className="");
-
-  for(let i=0;i<val.length;i++){
-    if(!spans[i])break;
-    if(val[i]===fullText[i])spans[i].classList.add("correct");
-    else spans[i].classList.add("wrong");
-  }
-  if(spans[val.length])spans[val.length].classList.add("current");
-
-  if(val.length>fullText.length*0.8){
-    addWords(40);
-    renderText();
-  }
-
-  if(practice){
-    const mins=(Date.now()-startTime)/60000;
-    const correctChars=[...val].filter((c,i)=>c===fullText[i]).length;
-    const wpm=Math.round((correctChars/5)/mins||0);
-    result.innerText="live wpm: "+wpm;
-  }
-});
-
-function endSession(){
-  const mins=(Date.now()-startTime)/60000;
-  const correctChars=[...input.value].filter((c,i)=>c===fullText[i]).length;
-  const wpm=Math.round((correctChars/5)/mins||0);
-
-  history.push(wpm);
-  localStorage.setItem("wpmHistory",JSON.stringify(history));
-
-  let diff=bestWpm-wpm;
-  if(wpm>bestWpm){
-    bestWpm=wpm;
-    localStorage.setItem("bestWpm",bestWpm);
-    best.innerText="best wpm: "+bestWpm;
-    result.innerText="new high score 🎉 "+wpm;
-  }else{
-    result.innerText=`wpm: ${wpm} | ${Math.abs(diff)} wpm away from best`;
-  }
-  drawChart();
-}
-
-function drawChart(){
-  const c=document.getElementById("chart");
-  const ctx=c.getContext("2d");
-  ctx.clearRect(0,0,c.width,c.height);
-
-  ctx.strokeStyle="#0f0";
-  ctx.beginPath();
-  history.slice(-20).forEach((v,i)=>{
-    const x=i*(c.width/20);
-    const y=c.height-(v/Math.max(...history,10))*c.height;
-    i?ctx.lineTo(x,y):ctx.moveTo(x,y);
-  });
-  ctx.stroke();
-}
-
-function toggleDark(){document.body.classList.toggle("dark")}
-function toggleNoSpace(){noSpace=!noSpace;nospace.innerText=noSpace?"on":"off";restart()}
-function togglePractice(){practice=!practice;practice.innerText=practice?"on":"off";restart()}
-
-restart();
-drawChart();
 </script>
 
 </body>
