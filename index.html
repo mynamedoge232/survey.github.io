@@ -1,206 +1,140 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<base href="https://cdn.jsdelivr.net/gh/gn-math/gn-math.github.io@main/">
-<link rel="icon" type="image/png" href="favicon.png">
-<link rel="apple-touch-icon" href="/favicon.png">
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>gn-math</title>
-<meta name="description" content="Play unbl*cked games like Crazy Cattle 3D and DriveMad on GN-Math. Fast, free, no downloads—perfect for school or home.">
+<title>typing trainer</title>
 <style>
-body{margin:0;font-family:sans-serif;background:#111;color:#eee}
-header{background:#fc2651;padding:1em;text-align:center;color:#fff;font-weight:bold;font-size:1.5em}
-.search-container{display:flex;justify-content:center;gap:10px;margin:1em}
-#searchBar,#sortOptions{padding:.5em;border-radius:6px;border:none}
-.zone-item{display:inline-block;width:200px;margin:10px;cursor:pointer;text-align:center;border:1px solid #333;border-radius:10px;overflow:hidden;transition:transform .2s}
-.zone-item:hover{transform:scale(1.05)}
-.zone-item img{width:100%;aspect-ratio:1;object-fit:cover}
-.zone-item button{width:100%;padding:10px;background:#222;color:#fff;border:none;cursor:pointer}
-.zone-item button:hover{background:#333}
-#zoneViewer{display:none;position:fixed;inset:0;background:#000;z-index:9999;flex-direction:column}
-.zone-header{background:#222;color:#fff;padding:10px;display:flex;justify-content:space-between;align-items:center}
-.zone-controls button{margin-left:10px;padding:8px 14px;cursor:pointer;background:#333;color:#fff;border:none;border-radius:5px}
-#zoneFrame{flex:1;width:100%;border:none}
-footer{background:#111;padding:1em;text-align:center;position:fixed;bottom:0;width:100%}
+:root{--bg:#f4f4f4;--box:#fff;--text:#000;--correct:green;--wrong:red}
+body.dark{--bg:#121212;--box:#1e1e1e;--text:#fff}
+body{background:var(--bg);color:var(--text);font-family:Arial;text-align:center;padding:30px}
+.box{background:var(--box);padding:20px;max-width:900px;margin:auto;border-radius:10px}
+#text{max-height:180px;overflow:auto;border:1px solid #aaa;padding:10px}
+#text span{padding:2px}
+.correct{color:var(--correct)} .wrong{color:var(--wrong)} .current{text-decoration:underline}
+textarea{width:100%;height:90px;font-size:16px;margin-top:10px;background:var(--bg);color:var(--text)}
+button{margin:5px;padding:8px 14px;font-size:15px}
+canvas{background:#111;margin-top:15px;border-radius:8px}
 </style>
 </head>
 <body>
 
-<header>gn-math</header>
+<div class="box">
+<h2>typing trainer</h2>
 
-<div class="search-container">
-  <input type="text" id="searchBar" placeholder="Search zones...">
-  <select id="sortOptions">
-    <option value="name">Name</option>
-    <option value="id">ID</option>
-    <option value="popular">Popular</option>
-  </select>
+<button onclick="toggleDark()">dark</button>
+<button onclick="togglePractice()">practice: <span id="practice">off</span></button>
+<button onclick="toggleNoSpace()">no-space: <span id="nospace">off</span></button>
+
+<div id="best">best wpm: 0</div>
+<div id="text"></div>
+<textarea id="input"></textarea>
+
+<button onclick="restart()">restart</button>
+<div id="result"></div>
+
+<canvas id="chart" width="850" height="200"></canvas>
 </div>
-
-<main style="padding:1em;">
-  <details id="featuredZonesWrapper" open>
-    <summary style="font-size:1.2rem;font-weight:bold;">Featured Zones</summary>
-    <div id="featuredZones"></div>
-  </details>
-  <br><hr><br>
-  <details id="allZonesWrapper" open>
-    <summary style="font-size:1.2rem;font-weight:bold;">All Zones</summary>
-    <div id="container">Loading...</div>
-  </details>
-</main>
-
-<div id="zoneViewer">
-  <div class="zone-header">
-    <div>
-      <h2 id="zoneName" style="margin:0">zone</h2>
-      <span id="zoneId" style="display:none"></span>
-      <a id="zoneAuthor" href="#" target="_blank" style="color:#ccc">by Author</a>
-    </div>
-    <div class="zone-controls">
-      <button onclick="fullscreenZone()">Fullscreen</button>
-      <button onclick="aboutBlank()">Open in New Tab</button>
-      <button onclick="downloadZone()">Download</button>
-      <button onclick="closeZone()">Close</button>
-    </div>
-  </div>
-  <iframe id="zoneFrame"></iframe>
-</div>
-
-<footer>
-  <a href="javascript:saveData()">Export Data</a> |
-  <a href="#" onclick="document.getElementById('importData').click();return false;">Import Data</a>
-  <input type="file" id="importData" style="display:none" onchange="loadData(event)">
-</footer>
 
 <script>
-const container=document.getElementById("container");
-const zoneViewer=document.getElementById("zoneViewer");
-let zoneFrame=document.getElementById("zoneFrame");
-const searchBar=document.getElementById("searchBar");
-const sortOptions=document.getElementById("sortOptions");
-const featuredContainer=document.getElementById("featuredZones");
-const coverURL="https://cdn.jsdelivr.net/gh/gn-math/covers@main";
-const htmlURL="https://cdn.jsdelivr.net/gh/gn-math/html@main";
-let zones=[],popularityData={},currentZoneId=null;
+const wordsList=["the","and","you","that","this","with","have","for","not","are","was","but","all","can","has","had","will","dog","cat","run","jump","play","fast","slow","good","nice","fun"];
+let words=[],fullText="",noSpace=false,practice=false;
+let startTime=0;
+let bestWpm=+localStorage.getItem("bestWpm")||0;
+let history=JSON.parse(localStorage.getItem("wpmHistory")||"[]");
 
-// === UNIVERSAL AUTO SAVE SYSTEM ===
-function enableUniversalAutoSave(zoneFrame, file){
-  const saveKey=`gnmath_save_${file.id}`;
-  const htmlKey=`gnmath_snapshot_${file.id}`;
-  // Load previous save
-  const jsonSave=localStorage.getItem(saveKey);
-  const htmlSave=localStorage.getItem(htmlKey);
-  if(jsonSave){
-    try{
-      const data=JSON.parse(jsonSave);
-      zoneFrame.contentWindow.postMessage({type:"LOAD_SAVE",data},"*");
-      console.log("Loaded structured save for",file.name);
-    }catch(e){console.warn("Failed JSON load",e);}
+best.innerText="best wpm: "+bestWpm;
+
+function addWords(count=60){
+  for(let i=0;i<count;i++){
+    words.push(wordsList[Math.floor(Math.random()*wordsList.length)]);
   }
-  // Start periodic save
-  if(zoneFrame.autoSaveInterval) clearInterval(zoneFrame.autoSaveInterval);
-  zoneFrame.autoSaveInterval=setInterval(()=>{
-    try{
-      if(zoneFrame.contentWindow.getSaveData){
-        const data=zoneFrame.contentWindow.getSaveData();
-        if(data){localStorage.setItem(saveKey,JSON.stringify(data)); return;}
-      }
-      const doc=zoneFrame.contentDocument;
-      if(doc && location.origin===zoneFrame.contentWindow.origin){
-        const html=doc.documentElement.outerHTML;
-        if(html.length<500000){localStorage.setItem(htmlKey,html);}
-      }
-    }catch(e){}
-  },7000);
 }
 
-// === Load and Sort Zones ===
-async function listZones(){
- try{
-   const res=await fetch("https://cdn.jsdelivr.net/gh/gn-math/assets@main/zones.json");
-   zones=await res.json();
-   await fetchPopularity();
-   sortZones();
- }catch(e){container.innerHTML="Error loading zones";}
+function renderText(){
+  fullText=noSpace?words.join(""):words.join(" ");
+  text.innerHTML="";
+  fullText.split("").forEach((c,i)=>{
+    const s=document.createElement("span");
+    s.innerText=c;
+    if(i===0)s.classList.add("current");
+    text.appendChild(s);
+  });
 }
-async function fetchPopularity(){
- try{
-   const res=await fetch("https://data.jsdelivr.com/v1/stats/packages/gh/gn-math/html@main/files?period=year");
-   const data=await res.json();
-   data.forEach(f=>{
-     const m=f.name.match(/\/(\d+)\.html$/);
-     if(m) popularityData[m[1]]=f.hits.total;
-   });
- }catch(e){}
+
+function restart(){
+  words=[]; addWords(80); renderText();
+  input.value=""; input.focus();
+  result.innerText="";
+  startTime=Date.now();
 }
-function sortZones(){
- const v=sortOptions.value;
- if(v==="name") zones.sort((a,b)=>a.name.localeCompare(b.name));
- else if(v==="id") zones.sort((a,b)=>a.id-b.id);
- else if(v==="popular") zones.sort((a,b)=>(popularityData[b.id]||0)-(popularityData[a.id]||0));
- displayZones(zones);
-}
-function displayZones(z){
- container.innerHTML="";
- z.forEach(f=>{
-   const d=document.createElement("div");
-   d.className="zone-item";
-   d.innerHTML=`<img src="${f.cover.replace('{COVER_URL}',coverURL)}"><button>${f.name}</button>`;
-   d.onclick=()=>openZone(f);
-   container.appendChild(d);
- });
-}
-searchBar.addEventListener("input",()=>{
- const q=searchBar.value.toLowerCase();
- const filtered=zones.filter(z=>z.name.toLowerCase().includes(q));
- displayZones(filtered);
+
+input.addEventListener("input",()=>{
+  const val=input.value;
+  const spans=[...text.children];
+  spans.forEach(s=>s.className="");
+
+  for(let i=0;i<val.length;i++){
+    if(!spans[i])break;
+    if(val[i]===fullText[i])spans[i].classList.add("correct");
+    else spans[i].classList.add("wrong");
+  }
+  if(spans[val.length])spans[val.length].classList.add("current");
+
+  if(val.length>fullText.length*0.8){
+    addWords(40);
+    renderText();
+  }
+
+  if(practice){
+    const mins=(Date.now()-startTime)/60000;
+    const correctChars=[...val].filter((c,i)=>c===fullText[i]).length;
+    const wpm=Math.round((correctChars/5)/mins||0);
+    result.innerText="live wpm: "+wpm;
+  }
 });
-sortOptions.addEventListener("change",sortZones);
 
-// === Game Viewer with Auto Save ===
-function openZone(f){
- const url=f.url.replace("{COVER_URL}",coverURL).replace("{HTML_URL}",htmlURL);
- fetch(url+"?t="+Date.now()).then(r=>r.text()).then(html=>{
-   zoneFrame.contentDocument.open();
-   zoneFrame.contentDocument.write(html);
-   zoneFrame.contentDocument.close();
-   document.getElementById("zoneName").textContent=f.name;
-   document.getElementById("zoneId").textContent=f.id;
-   document.getElementById("zoneAuthor").textContent="by "+f.author;
-   zoneViewer.style.display="flex";
-   currentZoneId=f.id;
+function endSession(){
+  const mins=(Date.now()-startTime)/60000;
+  const correctChars=[...input.value].filter((c,i)=>c===fullText[i]).length;
+  const wpm=Math.round((correctChars/5)/mins||0);
 
-   // Enable universal auto save
-   enableUniversalAutoSave(zoneFrame,f);
- }).catch(()=>alert("Failed to load zone"));
+  history.push(wpm);
+  localStorage.setItem("wpmHistory",JSON.stringify(history));
+
+  let diff=bestWpm-wpm;
+  if(wpm>bestWpm){
+    bestWpm=wpm;
+    localStorage.setItem("bestWpm",bestWpm);
+    best.innerText="best wpm: "+bestWpm;
+    result.innerText="new high score 🎉 "+wpm;
+  }else{
+    result.innerText=`wpm: ${wpm} | ${Math.abs(diff)} wpm away from best`;
+  }
+  drawChart();
 }
 
-function closeZone(){
- if(zoneFrame.autoSaveInterval) clearInterval(zoneFrame.autoSaveInterval);
- zoneViewer.style.display="none";
- currentZoneId=null;
+function drawChart(){
+  const c=document.getElementById("chart");
+  const ctx=c.getContext("2d");
+  ctx.clearRect(0,0,c.width,c.height);
+
+  ctx.strokeStyle="#0f0";
+  ctx.beginPath();
+  history.slice(-20).forEach((v,i)=>{
+    const x=i*(c.width/20);
+    const y=c.height-(v/Math.max(...history,10))*c.height;
+    i?ctx.lineTo(x,y):ctx.moveTo(x,y);
+  });
+  ctx.stroke();
 }
-function fullscreenZone(){if(zoneFrame.requestFullscreen) zoneFrame.requestFullscreen();}
-function aboutBlank(){
- const id=document.getElementById("zoneId").textContent;
- const z=zones.find(a=>a.id==id);
- if(!z) return;
- const url=z.url.replace("{COVER_URL}",coverURL).replace("{HTML_URL}",htmlURL);
- const w=window.open("about:blank","_blank");
- fetch(url).then(r=>r.text()).then(h=>{w.document.write(h);w.document.close();});
-}
-function downloadZone(){
- const id=document.getElementById("zoneId").textContent;
- const z=zones.find(a=>a.id==id);
- const url=z.url.replace("{COVER_URL}",coverURL).replace("{HTML_URL}",htmlURL);
- fetch(url).then(r=>r.text()).then(t=>{
-  const a=document.createElement("a");
-  a.href=URL.createObjectURL(new Blob([t]));
-  a.download=z.name+".html";a.click();
- });
-}
-listZones();
+
+function toggleDark(){document.body.classList.toggle("dark")}
+function toggleNoSpace(){noSpace=!noSpace;nospace.innerText=noSpace?"on":"off";restart()}
+function togglePractice(){practice=!practice;practice.innerText=practice?"on":"off";restart()}
+
+restart();
+drawChart();
 </script>
+
 </body>
 </html>
